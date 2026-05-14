@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Cookie Inspector",
+  "version": "1.0.0",
+  "description": "Inspect, search, copy and export cookies for any website with a beautiful dark UI.",
+  "permissions": [
+    "cookies",
+    "activeTab",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Cookie Inspector"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}

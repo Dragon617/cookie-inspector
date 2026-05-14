@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cookie Inspector</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <!-- ===== HEADER ===== -->
+  <header class="header">
+    <div class="header-left">
+      <!-- Inline SVG logo (cookie icon) -->
+      <svg class="logo-icon" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="18" cy="18" r="16" fill="#6C63FF" opacity="0.15" stroke="#6C63FF" stroke-width="1.5"/>
+        <circle cx="18" cy="18" r="10" fill="#6C63FF" opacity="0.25"/>
+        <!-- cookie bite -->
+        <path d="M18 8 C13.029 8 9 12.029 9 17 C9 21.971 13.029 26 18 26 C20.5 26 22.771 24.98 24.414 23.328 C22.9 22.86 22 21.5 22 20 C22 18.06 23.674 16.5 25.75 16.5 C26.234 16.5 26.695 16.59 27.117 16.754 C26.664 11.815 22.787 8 18 8Z" fill="#6C63FF"/>
+        <!-- dots -->
+        <circle cx="14" cy="15" r="1.5" fill="#fff" opacity="0.8"/>
+        <circle cx="19" cy="20" r="1.5" fill="#fff" opacity="0.8"/>
+        <circle cx="16" cy="21" r="1" fill="#fff" opacity="0.6"/>
+        <circle cx="21" cy="14" r="1" fill="#fff" opacity="0.6"/>
+      </svg>
+      <span class="header-title">Cookie Inspector</span>
+    </div>
+    <div class="header-right">
+      <button id="btn-refresh" class="icon-btn" title="刷新 Cookie">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="23 4 23 10 17 10"/>
+          <polyline points="1 20 1 14 7 14"/>
+          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Current domain pill -->
+  <div class="domain-bar">
+    <svg class="domain-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"/>
+      <line x1="2" y1="12" x2="22" y2="12"/>
+      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+    </svg>
+    <span id="current-domain" class="domain-text">加载中...</span>
+  </div>
+
+  <!-- ===== SEARCH BAR ===== -->
+  <div class="search-wrap">
+    <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="11" cy="11" r="8"/>
+      <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
+    <input id="search-input" class="search-input" type="text" placeholder="搜索 Cookie 名称或域名..." autocomplete="off" />
+    <button id="search-clear" class="search-clear hidden" title="清除搜索">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
+  </div>
+
+  <!-- ===== STATS BAR ===== -->
+  <div class="stats-bar">
+    <div class="stat-item">
+      <span class="stat-dot dot-total"></span>
+      <span id="stat-total">共 0 个</span>
+    </div>
+    <div class="stat-divider"></div>
+    <div class="stat-item" title="HttpOnly Cookie">
+      <span class="stat-dot dot-httponly"></span>
+      <span id="stat-httponly">HttpOnly: 0</span>
+    </div>
+    <div class="stat-divider"></div>
+    <div class="stat-item" title="Secure Cookie">
+      <span class="stat-dot dot-secure"></span>
+      <span id="stat-secure">Secure: 0</span>
+    </div>
+    <div class="stat-divider"></div>
+    <div class="stat-item" title="Session Cookie（无过期时间）">
+      <span class="stat-dot dot-session"></span>
+      <span id="stat-session">Session: 0</span>
+    </div>
+  </div>
+
+  <!-- ===== COOKIE LIST ===== -->
+  <div id="cookie-list" class="cookie-list">
+    <!-- Cards injected by JS -->
+  </div>
+
+  <!-- Empty state -->
+  <div id="empty-state" class="empty-state hidden">
+    <svg viewBox="0 0 80 80" fill="none" xmlns="http://www.w3.org/2000/svg" class="empty-icon">
+      <circle cx="40" cy="40" r="35" fill="#16213E" stroke="#6C63FF" stroke-width="2" stroke-dasharray="6 4"/>
+      <text x="40" y="46" text-anchor="middle" font-size="28" fill="#6C63FF" opacity="0.7">🍪</text>
+    </svg>
+    <p class="empty-title">没有找到 Cookie</p>
+    <p class="empty-sub" id="empty-sub-text">当前域名下没有 Cookie</p>
+  </div>
+
+  <!-- ===== FOOTER TOOLBAR ===== -->
+  <div class="footer-bar">
+    <button id="btn-export" class="footer-btn btn-export" title="导出为 JSON">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="7 10 12 15 17 10"/>
+        <line x1="12" y1="15" x2="12" y2="3"/>
+      </svg>
+      导出 JSON
+    </button>
+    <div class="footer-right">
+      <span id="filtered-count" class="filtered-info"></span>
+    </div>
+  </div>
+
+  <!-- Toast notification -->
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

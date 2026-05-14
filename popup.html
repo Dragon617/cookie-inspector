@@ -59,6 +59,25 @@
     </button>
   </div>
 
+  <!-- ===== CATEGORY FILTER ===== -->
+  <div class="category-bar" id="category-bar">
+    <button class="cat-btn active" data-cat="all" title="全部 Cookie">
+      <span class="cat-dot cat-all"></span>全部
+    </button>
+    <button class="cat-btn" data-cat="login" title="登录态/会话 Cookie">
+      <span class="cat-dot cat-login"></span>登录态
+    </button>
+    <button class="cat-btn" data-cat="track" title="分析追踪 Cookie">
+      <span class="cat-dot cat-track"></span>追踪
+    </button>
+    <button class="cat-btn" data-cat="pref" title="偏好设置 Cookie">
+      <span class="cat-dot cat-pref"></span>偏好
+    </button>
+    <button class="cat-btn" data-cat="other" title="其他 Cookie">
+      <span class="cat-dot cat-other"></span>其他
+    </button>
+  </div>
+
   <!-- ===== STATS BAR ===== -->
   <div class="stats-bar">
     <div class="stat-item">
@@ -106,6 +125,13 @@
         <line x1="12" y1="15" x2="12" y2="3"/>
       </svg>
       导出 JSON
+    </button>
+    <button id="btn-copy-login" class="footer-btn btn-copy-login" title="一键复制所有登录态 Cookie">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+      </svg>
+      复制登录态
     </button>
     <div class="footer-right">
       <span id="filtered-count" class="filtered-info"></span>

@@ -4,11 +4,13 @@
  * Responsibilities:
  *  1. Get the active tab URL → extract domain
  *  2. Query all cookies for that domain (and parent domains)
- *  3. Render cookie cards with collapse/expand, copy, tags
- *  4. Live search / filter
- *  5. Export filtered cookies as JSON
- *  6. Refresh button
- *  7. Toast notifications
+ *  3. Classify cookies by purpose (login, tracking, preference, other)
+ *  4. Render cookie cards with collapse/expand, copy, tags, importance
+ *  5. Live search / filter + category filter
+ *  6. Export filtered cookies as JSON
+ *  7. One-click copy all login cookies
+ *  8. Refresh button
+ *  9. Toast notifications
  */
 
 'use strict';
@@ -29,7 +31,9 @@ const statSession    = document.getElementById('stat-session');
 const filteredCount  = document.getElementById('filtered-count');
 const btnRefresh     = document.getElementById('btn-refresh');
 const btnExport      = document.getElementById('btn-export');
+const btnCopyLogin   = document.getElementById('btn-copy-login');
 const toastEl        = document.getElementById('toast');
+const categoryBar    = document.getElementById('category-bar');
 
 /* ================================================================
    State
@@ -38,15 +42,121 @@ let allCookies    = [];   // full cookie list for current domain
 let currentDomain = '';   // e.g. "bilibili.com"
 let currentUrl    = '';   // full URL of the active tab
 let toastTimer    = null;
+let activeCategory = 'all'; // 'all' | 'login' | 'track' | 'pref' | 'other'
+
+/* ================================================================
+   Cookie Classification Rules
+   ================================================================ */
+
+// Login/session related cookie name patterns
+const LOGIN_PATTERNS = [
+  'session', 'sid', 'token', 'auth', 'login', 'passport', 'ticket',
+  'credential', 'sso', 'oauth', 'jwt', 'bearer', 'access_token',
+  'refresh_token', 'csrf', 'xsrf', 'd_ticket', 'sessionid',
+  'sess', 'uid', 'user_id', 'userid', 'account_id', 'pass_token',
+  'stoken', 'cookie_token', 'login_ticket', 'web_id', 'msToken',
+  'ttwid', 'odin_tt', 'msToken', 'passport_csrf_token',
+  'acw_tc', 'aliyungf_tc', 'x-csrf-token', 'x-csrftoken',
+  'bduss', 'stoken', 'pt_key', 'pt_pin', 'wq_skey', 'wq_uin',
+  'p_skey', 'p_uin', 'skey', 'uin', 'super_key', 'supertoken',
+  'acw_sc__v2', 'acw_sc__v3', 'csrfState', 'csrfToken',
+  'is_staff_user', 'has_biz_token', 'biz_token', 'user_token',
+  'visitor_id', 'device_id', 'fpid', 'fp', 'device_fp'
+];
+
+// Tracking/analytics cookie name patterns
+const TRACK_PATTERNS = [
+  'ga', 'gid', 'gtm', '_ga', '_gid', '_gat', '_gcl',
+  'utm', 'fbp', '_fbp', 'pixel', 'tracking', 'tracker',
+  'analytics', 'metric', 'monitor', 'stat', 'log',
+  'sensor', 'sensors', 'amplitude', 'mixpanel', 'segment',
+  'kissmetrics', 'heap', 'hotjar', 'optimizely', 'vwo',
+  'ab_test', 'abtest', 'experiment', 'variant',
+  'tdid', 'td', 'tads', 'ad_id', 'advertising',
+  'doubleclick', 'googleads', 'gads', 'adsense',
+  'tt_scid', 'ttwid', 'msToken', 'odin_tt',
+  'bd_ticket_guard_client_web_domain', 'bd_ticket_guard_client_data',
+  '__ac_nonce', '__ac_signature', '__ac_referer',
+  'tt_webid', 'tt_webid_v2', 'tt_csrf_token',
+  's_v_web_id', 'msToken', 'ttwid'
+];
+
+// Preference/settings cookie name patterns
+const PREF_PATTERNS = [
+  'pref', 'preference', 'setting', 'config', 'theme',
+  'lang', 'language', 'locale', 'region', 'country',
+  'currency', 'timezone', 'tz', 'dark_mode', 'darkmode',
+  'layout', 'view', 'sort', 'filter', 'page_size',
+  'notification', 'notify', 'subscribe', 'email_pref',
+  'privacy', 'consent', 'gdpr', 'cookie_consent',
+  'banner_closed', 'tooltip', 'onboarding', 'tutorial',
+  'volume', 'mute', 'autoplay', 'quality', 'resolution',
+  'fontsize', 'font_size', 'zoom', 'scale'
+];
+
+/**
+ * Classify a cookie by its name into a category.
+ * Returns: { category: 'login'|'track'|'pref'|'other', importance: 'critical'|'high'|'normal' }
+ */
+function classifyCookie(cookie) {
+  const name = (cookie.name || '').toLowerCase();
+  const value = (cookie.value || '').toLowerCase();
+
+  // Check login patterns
+  for (const p of LOGIN_PATTERNS) {
+    if (name.includes(p.toLowerCase())) {
+      // Determine importance
+      let importance = 'high';
+      if (cookie.httpOnly) importance = 'critical';
+      else if (name.includes('token') || name.includes('session') || name.includes('auth')) importance = 'critical';
+      return { category: 'login', importance };
+    }
+  }
+
+  // Check tracking patterns
+  for (const p of TRACK_PATTERNS) {
+    if (name.includes(p.toLowerCase())) {
+      return { category: 'track', importance: 'normal' };
+    }
+  }
+
+  // Check preference patterns
+  for (const p of PREF_PATTERNS) {
+    if (name.includes(p.toLowerCase())) {
+      return { category: 'pref', importance: 'normal' };
+    }
+  }
+
+  // Heuristic: long random-looking values often indicate tracking/session
+  if (value.length > 50 && /^[a-zA-Z0-9_-]+$/.test(cookie.value || '')) {
+    if (cookie.httpOnly || cookie.secure) {
+      return { category: 'login', importance: cookie.httpOnly ? 'critical' : 'high' };
+    }
+    return { category: 'track', importance: 'normal' };
+  }
+
+  // Heuristic: short simple values are often preferences
+  if ((cookie.value || '').length < 20 && !cookie.httpOnly) {
+    return { category: 'pref', importance: 'normal' };
+  }
+
+  return { category: 'other', importance: 'normal' };
+}
+
+function getCategoryLabel(cat) {
+  const labels = { login: '登录态', track: '追踪', pref: '偏好', other: '其他' };
+  return labels[cat] || '其他';
+}
+
+function getImportanceLabel(imp) {
+  const labels = { critical: '关键', high: '重要', normal: '普通' };
+  return labels[imp] || '普通';
+}
 
 /* ================================================================
    Helpers
    ================================================================ */
 
-/**
- * Extract registrable domain from a URL.
- * e.g. "https://www.bilibili.com/video/xxx" → "bilibili.com"
- */
 function extractDomain(url) {
   try {
     const u = new URL(url);
@@ -56,17 +166,10 @@ function extractDomain(url) {
   }
 }
 
-/**
- * Get all parent-domain variants for a hostname so we can query
- * cookies that may be set on ".example.com" for "sub.example.com".
- * Returns an array like ["sub.bilibili.com", "bilibili.com", ".bilibili.com", ".sub.bilibili.com"]
- */
 function getDomainVariants(hostname) {
   const variants = new Set();
-  // The hostname itself and with leading dot
   variants.add(hostname);
   variants.add('.' + hostname);
-  // Walk up the domain tree
   const parts = hostname.split('.');
   for (let i = 1; i < parts.length - 1; i++) {
     const parent = parts.slice(i).join('.');
@@ -76,10 +179,6 @@ function getDomainVariants(hostname) {
   return Array.from(variants);
 }
 
-/**
- * Format a cookie expiration date.
- * expirationDate is Unix timestamp (seconds). Returns a readable string.
- */
 function formatExpiry(cookie) {
   if (cookie.session || !cookie.expirationDate) {
     return 'Session';
@@ -93,17 +192,11 @@ function formatExpiry(cookie) {
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/**
- * Truncate a string to maxLen with ellipsis.
- */
 function truncate(str, maxLen) {
   if (!str || str.length <= maxLen) return str || '';
   return str.slice(0, maxLen) + '…';
 }
 
-/**
- * Escape HTML special chars.
- */
 function escapeHtml(str) {
   return String(str)
     .replace(/&/g, '&amp;')
@@ -112,10 +205,6 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;');
 }
 
-/**
- * Highlight query text in a string (case-insensitive).
- * Returns HTML string.
- */
 function highlight(text, query) {
   if (!query) return escapeHtml(text);
   const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -130,7 +219,6 @@ function showToast(msg, duration = 1800) {
   if (toastTimer) clearTimeout(toastTimer);
   toastEl.textContent = msg;
   toastEl.classList.remove('hidden');
-  // force reflow so transition fires
   void toastEl.offsetWidth;
   toastEl.classList.add('show');
   toastTimer = setTimeout(() => {
@@ -164,34 +252,36 @@ async function copyText(text, btnEl) {
 function buildCard(cookie, query) {
   const card = document.createElement('div');
   card.className = 'cookie-card';
+  card.dataset.category = cookie._category;
 
-  // ---- Tags ----
   const tags = [];
   if (cookie.httpOnly) tags.push('<span class="tag tag-httponly">HttpOnly</span>');
   if (cookie.secure)   tags.push('<span class="tag tag-secure">Secure</span>');
   if (cookie.session || !cookie.expirationDate) tags.push('<span class="tag tag-session">Session</span>');
   if (cookie.sameSite && cookie.sameSite !== 'unspecified') {
-    tags.push(`<span class="tag tag-samesite">SameSite:${cookie.sameSite}</span>`);
+    tags.push(`<span class="tag tag-samesite">SameSite:${escapeHtml(cookie.sameSite)}</span>`);
   }
+  // Add category tag
+  tags.push(`<span class="tag tag-cat-${cookie._category}">${getCategoryLabel(cookie._category)}</span>`);
 
-  // ---- Value display ----
   const rawValue    = cookie.value || '';
   const shortValue  = truncate(rawValue, 40);
   const isLong      = rawValue.length > 40;
   const valueId     = `val-${Math.random().toString(36).slice(2)}`;
 
-  // ---- Expiry ----
   const expiry      = formatExpiry(cookie);
   const isExpired   = expiry === '已过期';
 
-  // ---- Highlighted name / domain ----
   const nameHtml   = highlight(cookie.name   || '(无名称)', query);
   const domainHtml = highlight(cookie.domain || '', query);
 
-  // ---- Build inner HTML ----
+  // Importance badge
+  const impClass = `importance-${cookie._importance}`;
+  const impLabel = getImportanceLabel(cookie._importance);
+
   card.innerHTML = `
     <div class="card-top">
-      <span class="card-name">${nameHtml}</span>
+      <span class="card-name">${nameHtml}<span class="importance ${impClass}">${impLabel}</span></span>
       <div class="card-actions">
         <button class="card-action-btn btn-copy-name" title="复制名称">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -247,19 +337,16 @@ function buildCard(cookie, query) {
     </div>
   `;
 
-  // ---- Event: copy name ----
   card.querySelector('.btn-copy-name').addEventListener('click', (e) => {
     e.stopPropagation();
     copyText(cookie.name || '', e.currentTarget);
   });
 
-  // ---- Event: copy value ----
   card.querySelector('.btn-copy-val').addEventListener('click', (e) => {
     e.stopPropagation();
     copyText(cookie.value || '', e.currentTarget);
   });
 
-  // ---- Event: expand / collapse value ----
   const toggle = card.querySelector('.value-toggle');
   if (toggle) {
     toggle.addEventListener('click', () => {
@@ -290,9 +377,15 @@ function renderCookies(cookies, query) {
 
   if (cookies.length === 0) {
     emptyState.classList.remove('hidden');
-    emptySubText.textContent = query
-      ? `没有匹配 "${query}" 的 Cookie`
-      : (currentDomain ? `${currentDomain} 下没有 Cookie` : '当前页面没有 Cookie');
+    let msg = '';
+    if (activeCategory !== 'all') {
+      msg = `没有「${getCategoryLabel(activeCategory)}」类别的 Cookie`;
+    } else if (query) {
+      msg = `没有匹配 "${query}" 的 Cookie`;
+    } else {
+      msg = currentDomain ? `${currentDomain} 下没有 Cookie` : '当前页面没有 Cookie';
+    }
+    emptySubText.textContent = msg;
     cookieList.style.display = 'none';
     filteredCount.textContent = '';
     return;
@@ -305,8 +398,7 @@ function renderCookies(cookies, query) {
   cookies.forEach(c => frag.appendChild(buildCard(c, query)));
   cookieList.appendChild(frag);
 
-  // Show filter info
-  if (query) {
+  if (query || activeCategory !== 'all') {
     filteredCount.textContent = `显示 ${cookies.length} / ${allCookies.length} 个`;
   } else {
     filteredCount.textContent = '';
@@ -329,15 +421,26 @@ function updateStats(cookies) {
 }
 
 /* ================================================================
-   Filter cookies by search query
+   Filter cookies by search query + category
    ================================================================ */
 function getFilteredCookies(query) {
-  if (!query) return allCookies;
-  const q = query.toLowerCase();
-  return allCookies.filter(c =>
-    (c.name   || '').toLowerCase().includes(q) ||
-    (c.domain || '').toLowerCase().includes(q)
-  );
+  let result = allCookies;
+
+  // Category filter
+  if (activeCategory !== 'all') {
+    result = result.filter(c => c._category === activeCategory);
+  }
+
+  // Search filter
+  if (query) {
+    const q = query.toLowerCase();
+    result = result.filter(c =>
+      (c.name   || '').toLowerCase().includes(q) ||
+      (c.domain || '').toLowerCase().includes(q)
+    );
+  }
+
+  return result;
 }
 
 /* ================================================================
@@ -360,7 +463,6 @@ async function loadCookies() {
   showLoading();
 
   try {
-    // 1. Get active tab
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab || !tab.url) {
       allCookies = [];
@@ -375,39 +477,44 @@ async function loadCookies() {
     currentDomain = extractDomain(currentUrl);
     domainEl.textContent = currentDomain;
 
-    // 2. Query cookies via chrome.cookies.getAll
-    //    We query for each domain variant to maximise coverage.
-    //    chrome.cookies.getAll({ url }) is the most reliable method.
     let cookies = [];
-
-    // Primary: use url-based query (covers subdomains and parent domains)
     const byCookieUrl = await chrome.cookies.getAll({ url: currentUrl });
     cookies.push(...byCookieUrl);
 
-    // Supplement: also query by domain variants in case some cookies
-    // are not returned by URL query (edge cases on some platforms)
     const variants = getDomainVariants(currentDomain);
     for (const domain of variants) {
       const extra = await chrome.cookies.getAll({ domain });
       cookies.push(...extra);
     }
 
-    // Deduplicate by name+domain+path
+    // Deduplicate
     const seen = new Set();
-    allCookies = cookies.filter(c => {
+    cookies = cookies.filter(c => {
       const key = `${c.name}||${c.domain}||${c.path}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     });
 
-    // Sort: httpOnly first, then by name
-    allCookies.sort((a, b) => {
-      if (a.httpOnly && !b.httpOnly) return -1;
-      if (!a.httpOnly && b.httpOnly) return 1;
+    // Classify each cookie
+    cookies.forEach(c => {
+      const cls = classifyCookie(c);
+      c._category = cls.category;
+      c._importance = cls.importance;
+    });
+
+    // Sort: critical first, then login, then by name
+    cookies.sort((a, b) => {
+      const impOrder = { critical: 0, high: 1, normal: 2 };
+      if (impOrder[a._importance] !== impOrder[b._importance]) {
+        return impOrder[a._importance] - impOrder[b._importance];
+      }
+      if (a._category === 'login' && b._category !== 'login') return -1;
+      if (a._category !== 'login' && b._category === 'login') return 1;
       return (a.name || '').localeCompare(b.name || '');
     });
 
+    allCookies = cookies;
     updateStats(allCookies);
 
     const query = searchInput.value.trim();
@@ -450,6 +557,8 @@ function exportJson() {
     session:        c.session,
     sameSite:       c.sameSite,
     storeId:        c.storeId,
+    category:       c._category,
+    importance:     c._importance,
   }));
 
   const json = JSON.stringify(exportData, null, 2);
@@ -469,15 +578,51 @@ function exportJson() {
 }
 
 /* ================================================================
+   Copy all login cookies
+   ================================================================ */
+async function copyLoginCookies() {
+  const loginCookies = allCookies.filter(c => c._category === 'login');
+  if (loginCookies.length === 0) {
+    showToast('未找到登录态 Cookie');
+    return;
+  }
+
+  const lines = loginCookies.map(c => `${c.name}=${c.value}`);
+  const text = lines.join('; ');
+
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast(`✓ 已复制 ${loginCookies.length} 个登录态 Cookie`);
+  } catch (_) {
+    showToast('复制失败，请手动复制');
+  }
+}
+
+/* ================================================================
+   Category filter buttons
+   ================================================================ */
+function setupCategoryButtons() {
+  const buttons = categoryBar.querySelectorAll('.cat-btn');
+  buttons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      buttons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activeCategory = btn.dataset.cat;
+      const query = searchInput.value.trim();
+      const filtered = getFilteredCookies(query);
+      renderCookies(filtered, query);
+    });
+  });
+}
+
+/* ================================================================
    Event listeners
    ================================================================ */
 
-// Search – real-time filter
 searchInput.addEventListener('input', () => {
   const query    = searchInput.value.trim();
   const filtered = getFilteredCookies(query);
 
-  // Toggle clear button
   if (query) {
     searchClear.classList.remove('hidden');
   } else {
@@ -487,26 +632,26 @@ searchInput.addEventListener('input', () => {
   renderCookies(filtered, query);
 });
 
-// Clear search
 searchClear.addEventListener('click', () => {
   searchInput.value = '';
   searchClear.classList.add('hidden');
-  renderCookies(allCookies, '');
+  renderCookies(getFilteredCookies(''), '');
   searchInput.focus();
 });
 
-// Refresh
 btnRefresh.addEventListener('click', () => {
-  // Spin animation
   btnRefresh.classList.add('spinning');
   setTimeout(() => btnRefresh.classList.remove('spinning'), 650);
   loadCookies();
 });
 
-// Export
 btnExport.addEventListener('click', exportJson);
+btnCopyLogin.addEventListener('click', copyLoginCookies);
 
 /* ================================================================
    Init
    ================================================================ */
-document.addEventListener('DOMContentLoaded', loadCookies);
+document.addEventListener('DOMContentLoaded', () => {
+  setupCategoryButtons();
+  loadCookies();
+});
